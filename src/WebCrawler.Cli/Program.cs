@@ -6,7 +6,7 @@ using WebCrawler.Infrastructure.Robots;
 
 using var httpClient = HttpClientFactory.CreateDefault();
 var siteService = new SiteService(
-    new HttpPageFetcher(httpClient),
+    new HttpResourceFetcher(httpClient),
     new HttpRobotsPolicyProvider(httpClient),
     new HtmlAgilityDocumentParser());
 var exitCode = await CliApplication.RunAsync(args, Console.Out, siteService, CancellationToken.None);

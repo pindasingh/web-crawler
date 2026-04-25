@@ -6,7 +6,7 @@ using WebCrawler.Infrastructure.Http;
 
 namespace WebCrawler.Cli.Tests;
 
-public class HttpPageFetcherTests
+public class HttpResourceFetcherTests
 {
     [Fact]
     public async Task ReturnsRedirectWithoutReadingOversizedBody()
@@ -15,9 +15,9 @@ public class HttpPageFetcherTests
         response.Headers.Location = new Uri("https://example.com/final");
         var fetcher = CreateFetcher(response);
 
-        var result = await fetcher.FetchAsync(new Uri("https://example.com/start"), FetchRequestMethod.Get, TimeSpan.FromSeconds(1), 10, CancellationToken.None);
+        var result = await fetcher.FetchAsync(new Uri("https://example.com/start"), HttpFetchMethod.Get, TimeSpan.FromSeconds(1), 10, CancellationToken.None);
 
-        Assert.Equal(SingleFetchResultKind.Response, result.Kind);
+        Assert.Equal(HttpFetchResultKind.Response, result.Kind);
         Assert.Equal(302, result.StatusCode);
         Assert.Equal("https://example.com/final", result.RedirectLocation?.AbsoluteUri);
         Assert.Equal(string.Empty, result.Body);
@@ -30,9 +30,9 @@ public class HttpPageFetcherTests
         response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(7));
         var fetcher = CreateFetcher(response);
 
-        var result = await fetcher.FetchAsync(new Uri("https://example.com/"), FetchRequestMethod.Get, TimeSpan.FromSeconds(1), 10, CancellationToken.None);
+        var result = await fetcher.FetchAsync(new Uri("https://example.com/"), HttpFetchMethod.Get, TimeSpan.FromSeconds(1), 10, CancellationToken.None);
 
-        Assert.Equal(SingleFetchResultKind.Response, result.Kind);
+        Assert.Equal(HttpFetchResultKind.Response, result.Kind);
         Assert.Equal(503, result.StatusCode);
         Assert.Equal(TimeSpan.FromSeconds(7), result.RetryAfter);
         Assert.Equal(string.Empty, result.Body);
@@ -43,9 +43,9 @@ public class HttpPageFetcherTests
     {
         var fetcher = CreateFetcher(CreateResponse(HttpStatusCode.OK, new string('x', 100)));
 
-        var result = await fetcher.FetchAsync(new Uri("https://example.com/"), FetchRequestMethod.Get, TimeSpan.FromSeconds(1), 10, CancellationToken.None);
+        var result = await fetcher.FetchAsync(new Uri("https://example.com/"), HttpFetchMethod.Get, TimeSpan.FromSeconds(1), 10, CancellationToken.None);
 
-        Assert.Equal(SingleFetchResultKind.ResponseTooLarge, result.Kind);
+        Assert.Equal(HttpFetchResultKind.ResponseTooLarge, result.Kind);
         Assert.Equal(200, result.StatusCode);
     }
 
@@ -60,15 +60,15 @@ public class HttpPageFetcherTests
         };
         var fetcher = CreateFetcher(response);
 
-        var result = await fetcher.FetchAsync(new Uri("https://example.com/"), FetchRequestMethod.Get, TimeSpan.FromSeconds(1), 100, CancellationToken.None);
+        var result = await fetcher.FetchAsync(new Uri("https://example.com/"), HttpFetchMethod.Get, TimeSpan.FromSeconds(1), 100, CancellationToken.None);
 
-        Assert.Equal(SingleFetchResultKind.Response, result.Kind);
+        Assert.Equal(HttpFetchResultKind.Response, result.Kind);
         Assert.Equal("caf\u00e9", result.Body);
     }
 
-    private static HttpPageFetcher CreateFetcher(HttpResponseMessage response)
+    private static HttpResourceFetcher CreateFetcher(HttpResponseMessage response)
     {
-        return new HttpPageFetcher(new HttpClient(new StubHttpMessageHandler(response)));
+        return new HttpResourceFetcher(new HttpClient(new StubHttpMessageHandler(response)));
     }
 
     private static HttpResponseMessage CreateResponse(HttpStatusCode statusCode, string body)

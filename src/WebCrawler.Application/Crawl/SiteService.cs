@@ -8,16 +8,16 @@ namespace WebCrawler.Application.Crawl;
 
 public sealed class SiteService
 {
-    private readonly IPageFetcher _pageFetcher;
+    private readonly IHttpResourceFetcher _httpFetcher;
     private readonly IRobotsPolicyProvider _robotsPolicyProvider;
     private readonly IHtmlDocumentParser _htmlDocumentParser;
 
     public SiteService(
-        IPageFetcher pageFetcher,
+        IHttpResourceFetcher httpFetcher,
         IRobotsPolicyProvider robotsPolicyProvider,
         IHtmlDocumentParser htmlDocumentParser)
     {
-        _pageFetcher = pageFetcher;
+        _httpFetcher = httpFetcher;
         _robotsPolicyProvider = robotsPolicyProvider;
         _htmlDocumentParser = htmlDocumentParser;
     }
@@ -199,21 +199,21 @@ public sealed class SiteService
 
         for (var redirectCount = 0; redirectCount <= state.Options.MaxRedirects; redirectCount++)
         {
-            var singleFetch = await _pageFetcher.FetchAsync(currentUrl, FetchRequestMethod.Get, state.Options.RequestTimeout, state.Options.MaxPageBytes, cancellationToken);
+            var singleFetch = await _httpFetcher.FetchAsync(currentUrl, HttpFetchMethod.Get, state.Options.RequestTimeout, state.Options.MaxPageBytes, cancellationToken);
 
-            if (singleFetch.Kind == SingleFetchResultKind.Timeout)
+            if (singleFetch.Kind == HttpFetchResultKind.Timeout)
             {
                 return FetchOutcome.TransientFailure(requestedUrl, currentUrl, "timeout", redirectChain);
             }
 
-            if (singleFetch.Kind == SingleFetchResultKind.TransportError)
+            if (singleFetch.Kind == HttpFetchResultKind.TransportError)
             {
                 return FetchOutcome.TransientFailure(requestedUrl, currentUrl, "transport-error", redirectChain);
             }
 
             var statusCode = singleFetch.StatusCode ?? 0;
 
-            if (singleFetch.Kind == SingleFetchResultKind.ResponseTooLarge)
+            if (singleFetch.Kind == HttpFetchResultKind.ResponseTooLarge)
             {
                 return FetchOutcome.TerminalFailure(requestedUrl, currentUrl, statusCode, "response-too-large", redirectChain);
             }
@@ -290,7 +290,7 @@ public sealed class SiteService
 
     private async Task<ProbeOutcome> ProbeFinalDestinationAsync(Uri candidateUrl, Options options, CancellationToken cancellationToken)
     {
-        var headOutcome = await FollowProbeRedirectsAsync(candidateUrl, FetchRequestMethod.Head, options, cancellationToken);
+        var headOutcome = await FollowProbeRedirectsAsync(candidateUrl, HttpFetchMethod.Head, options, cancellationToken);
 
         if (headOutcome.Kind == ProbeOutcomeKind.Success)
         {
@@ -299,28 +299,28 @@ public sealed class SiteService
 
         if (headOutcome.Kind == ProbeOutcomeKind.UnsupportedHead)
         {
-            return await FollowProbeRedirectsAsync(candidateUrl, FetchRequestMethod.Get, options, cancellationToken);
+            return await FollowProbeRedirectsAsync(candidateUrl, HttpFetchMethod.Get, options, cancellationToken);
         }
 
         return headOutcome;
     }
 
-    private async Task<ProbeOutcome> FollowProbeRedirectsAsync(Uri candidateUrl, FetchRequestMethod method, Options options, CancellationToken cancellationToken)
+    private async Task<ProbeOutcome> FollowProbeRedirectsAsync(Uri candidateUrl, HttpFetchMethod method, Options options, CancellationToken cancellationToken)
     {
         var currentUrl = candidateUrl;
 
         for (var redirectCount = 0; redirectCount <= options.MaxRedirects; redirectCount++)
         {
-            var singleFetch = await _pageFetcher.FetchAsync(currentUrl, method, options.RequestTimeout, options.MaxPageBytes, cancellationToken);
+            var singleFetch = await _httpFetcher.FetchAsync(currentUrl, method, options.RequestTimeout, options.MaxPageBytes, cancellationToken);
 
-            if (singleFetch.Kind != SingleFetchResultKind.Response)
+            if (singleFetch.Kind != HttpFetchResultKind.Response)
             {
                 return ProbeOutcome.Unresolved(currentUrl);
             }
 
             var statusCode = singleFetch.StatusCode ?? 0;
 
-            if (method == FetchRequestMethod.Head && statusCode is 405 or 501)
+            if (method == HttpFetchMethod.Head && statusCode is 405 or 501)
             {
                 return ProbeOutcome.UnsupportedHead(currentUrl);
             }

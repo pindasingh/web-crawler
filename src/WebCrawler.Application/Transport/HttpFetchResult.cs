@@ -1,41 +1,41 @@
 namespace WebCrawler.Application.Transport;
 
-public sealed record SingleFetchResult(
-    SingleFetchResultKind Kind,
+public sealed record HttpFetchResult(
+    HttpFetchResultKind Kind,
     int? StatusCode,
     string Body,
     string? ContentType,
     Uri? RedirectLocation,
     TimeSpan? RetryAfter)
 {
-    public static SingleFetchResult Response(int statusCode, string body, string? contentType, Uri? redirectLocation, TimeSpan? retryAfter = null)
+    public static HttpFetchResult Response(int statusCode, string body, string? contentType, Uri? redirectLocation, TimeSpan? retryAfter = null)
     {
-        return new SingleFetchResult(SingleFetchResultKind.Response, statusCode, body, contentType, redirectLocation, retryAfter);
+        return new HttpFetchResult(HttpFetchResultKind.Response, statusCode, body, contentType, redirectLocation, retryAfter);
     }
 
-    public static SingleFetchResult ResponseTooLarge(int statusCode, string? contentType, Uri? redirectLocation, TimeSpan? retryAfter = null)
+    public static HttpFetchResult ResponseTooLarge(int statusCode, string? contentType, Uri? redirectLocation, TimeSpan? retryAfter = null)
     {
-        return new SingleFetchResult(SingleFetchResultKind.ResponseTooLarge, statusCode, string.Empty, contentType, redirectLocation, retryAfter);
+        return new HttpFetchResult(HttpFetchResultKind.ResponseTooLarge, statusCode, string.Empty, contentType, redirectLocation, retryAfter);
     }
 
-    public static SingleFetchResult Timeout()
+    public static HttpFetchResult Timeout()
     {
-        return new SingleFetchResult(SingleFetchResultKind.Timeout, null, string.Empty, null, null, null);
+        return new HttpFetchResult(HttpFetchResultKind.Timeout, null, string.Empty, null, null, null);
     }
 
-    public static SingleFetchResult TransportError()
+    public static HttpFetchResult TransportError()
     {
-        return new SingleFetchResult(SingleFetchResultKind.TransportError, null, string.Empty, null, null, null);
+        return new HttpFetchResult(HttpFetchResultKind.TransportError, null, string.Empty, null, null, null);
     }
 }
 
-public enum FetchRequestMethod
+public enum HttpFetchMethod
 {
     Head,
     Get
 }
 
-public enum SingleFetchResultKind
+public enum HttpFetchResultKind
 {
     Response,
     ResponseTooLarge,

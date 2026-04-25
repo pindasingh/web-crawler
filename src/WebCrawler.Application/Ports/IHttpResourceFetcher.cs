@@ -2,7 +2,7 @@ using WebCrawler.Application.Transport;
 
 namespace WebCrawler.Application.Ports;
 
-public interface IPageFetcher
+public interface IHttpResourceFetcher
 {
-    Task<SingleFetchResult> FetchAsync(Uri url, FetchRequestMethod method, TimeSpan timeout, int maxPageBytes, CancellationToken cancellationToken);
+    Task<HttpFetchResult> FetchAsync(Uri url, HttpFetchMethod method, TimeSpan timeout, int maxPageBytes, CancellationToken cancellationToken);
 }

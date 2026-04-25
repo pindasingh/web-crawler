@@ -14,7 +14,7 @@ public class SiteServiceTests
     [Fact]
     public async Task IncludesHttpAndHttpsVariantsForSameScopeIdentity()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"http://example.com/about\">About</a><a href=\"ftp://example.com/file\">Ftp</a></body></html>");
         fetcher.EnqueueGetResponse("http://example.com/about", 200, "<html><body></body></html>");
 
@@ -23,7 +23,7 @@ public class SiteServiceTests
         var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "http://example.com/about");
-        Assert.Equal(0, fetcher.GetRequestCount("ftp://example.com/file", FetchRequestMethod.Get));
+        Assert.Equal(0, fetcher.GetRequestCount("ftp://example.com/file", HttpFetchMethod.Get));
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public class SiteServiceTests
     [Fact]
     public async Task FallsBackToGetWhenHeadProbeIsUnsupported()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://www.example.com/", 200, "<html><body><a href=\"https://example.com/entry\">Entry</a></body></html>");
         fetcher.EnqueueHeadResponse("https://example.com/entry", 405, string.Empty, "text/plain");
         fetcher.EnqueueGetResponse("https://example.com/entry", 302, string.Empty, "text/plain", "https://www.example.com/landing");
@@ -68,8 +68,8 @@ public class SiteServiceTests
         var report = await service.RunAsync("https://www.example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://www.example.com/landing");
-        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/entry", FetchRequestMethod.Head));
-        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/entry", FetchRequestMethod.Get));
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/entry", HttpFetchMethod.Head));
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/entry", HttpFetchMethod.Get));
         Assert.Contains("HEAD https://example.com/entry", fetcher.RequestOrder);
         Assert.Contains("GET https://example.com/entry", fetcher.RequestOrder);
     }
@@ -77,7 +77,7 @@ public class SiteServiceTests
     [Fact]
     public async Task KeepsWwwAndNonWwwDistinctWhenRedirectProbeDoesNotResolveToSeedIdentity()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://www.example.com/", 200, "<html><body><a href=\"https://example.com/plain\">Plain</a></body></html>");
         fetcher.EnqueueHeadResponse("https://example.com/plain", 200, string.Empty, "text/plain");
 
@@ -86,13 +86,13 @@ public class SiteServiceTests
         var report = await service.RunAsync("https://www.example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/plain");
-        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/plain", FetchRequestMethod.Get));
+        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/plain", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task UsesResolvedDestinationForVariantScopeEligibility()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"https://www.example.com/entry\">Entry</a><a href=\"https://example.com./dot\">Dot</a></body></html>");
         fetcher.EnqueueHeadResponse("https://www.example.com/entry", 302, string.Empty, "text/plain", "https://example.com/final");
         fetcher.EnqueueHeadResponse("https://example.com/final", 200, string.Empty, "text/plain");
@@ -113,7 +113,7 @@ public class SiteServiceTests
     [Fact]
     public async Task RejectsVariantRedirectsOutsideSeedIdentity()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"https://www.example.com/entry\">Entry</a></body></html>");
         fetcher.EnqueueHeadResponse("https://www.example.com/entry", 302, string.Empty, "text/plain", "https://www.example.com/final");
         fetcher.EnqueueHeadResponse("https://www.example.com/final", 200, string.Empty, "text/plain");
@@ -123,13 +123,13 @@ public class SiteServiceTests
         var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://www.example.com/final");
-        Assert.Equal(0, fetcher.GetRequestCount("https://www.example.com/final", FetchRequestMethod.Get));
+        Assert.Equal(0, fetcher.GetRequestCount("https://www.example.com/final", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task FetchesSharedFinalRedirectTargetOnce()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/a\">A</a><a href=\"/b\">B</a></body></html>");
         fetcher.EnqueueGetResponse("https://example.com/a", 302, string.Empty, "text/plain", "https://example.com/final");
         fetcher.EnqueueGetResponse("https://example.com/final", 200, "<html><body></body></html>");
@@ -140,13 +140,13 @@ public class SiteServiceTests
         var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.Single(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/final");
-        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/final", FetchRequestMethod.Get));
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/final", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task ReportsInScopeRedirectsOutOfScope()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/exit\">Exit</a></body></html>");
         fetcher.EnqueueGetResponse("https://example.com/exit", 302, string.Empty, "text/plain", "https://other.example/final");
 
@@ -163,7 +163,7 @@ public class SiteServiceTests
     [Fact]
     public async Task FailsRedirectLoopsWithoutUnboundedFetches()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 302, string.Empty, "text/plain", "https://example.com/a");
         fetcher.EnqueueGetResponse("https://example.com/a", 302, string.Empty, "text/plain", "https://example.com/");
 
@@ -174,14 +174,14 @@ public class SiteServiceTests
         var page = Assert.Single(report.Pages);
         Assert.Equal(PageStatus.Failed, page.Status);
         Assert.Equal("redirect-loop", page.Error);
-        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/", FetchRequestMethod.Get));
-        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/a", FetchRequestMethod.Get));
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/", HttpFetchMethod.Get));
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/a", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task ReportsFinalAttemptWhenRetryAttemptsAreExhausted()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 503, string.Empty, retryAfter: TimeSpan.Zero);
         fetcher.EnqueueGetResponse("https://example.com/", 503, string.Empty, retryAfter: TimeSpan.Zero);
         fetcher.EnqueueGetResponse("https://example.com/", 503, string.Empty, retryAfter: TimeSpan.Zero);
@@ -195,13 +195,13 @@ public class SiteServiceTests
         Assert.Equal("http-503", page.Error);
         Assert.Equal(503, page.StatusCode);
         Assert.Equal(3, page.AttemptCount);
-        Assert.Equal(3, fetcher.GetRequestCount("https://example.com/", FetchRequestMethod.Get));
+        Assert.Equal(3, fetcher.GetRequestCount("https://example.com/", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task ProcessesReadyWorkBeforeDelayedRetry()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/retry\">Retry</a><a href=\"/other\">Other</a></body></html>");
         fetcher.EnqueueGetResponse("https://example.com/retry", 500, string.Empty);
         fetcher.EnqueueGetResponse("https://example.com/retry", 200, "<html><body></body></html>");
@@ -219,7 +219,7 @@ public class SiteServiceTests
     [Fact]
     public async Task ReportsOversizedResponsesWithoutParsingLinks()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/hidden\">Hidden</a></body></html>");
 
         var service = CreateService(fetcher);
@@ -229,13 +229,13 @@ public class SiteServiceTests
         var page = Assert.Single(report.Pages);
         Assert.Equal(PageStatus.Failed, page.Status);
         Assert.Equal("response-too-large", page.Error);
-        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/hidden", FetchRequestMethod.Get));
+        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/hidden", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task DoesNotFetchLinksBeyondConfiguredMaxDepth()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/child\">Child</a></body></html>");
         fetcher.EnqueueGetResponse("https://example.com/child", 200, "<html><body><a href=\"/grandchild\">Grandchild</a></body></html>");
 
@@ -245,13 +245,13 @@ public class SiteServiceTests
 
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/child");
         Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/grandchild");
-        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/grandchild", FetchRequestMethod.Get));
+        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/grandchild", HttpFetchMethod.Get));
     }
 
     [Fact]
     public async Task UsesUnlimitedDepthByDefault()
     {
-        var fetcher = new FakePageFetcher();
+        var fetcher = new FakeHttpResourceFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/child\">Child</a></body></html>");
         fetcher.EnqueueGetResponse("https://example.com/child", 200, "<html><body><a href=\"/grandchild\">Grandchild</a></body></html>");
         fetcher.EnqueueGetResponse("https://example.com/grandchild", 200, "<html><body></body></html>");
@@ -272,7 +272,7 @@ public class SiteServiceTests
         Assert.False(rules.IsAllowed(new Uri("https://example.com/blocked")));
     }
 
-    private static SiteService CreateService(FakePageFetcher fetcher)
+    private static SiteService CreateService(FakeHttpResourceFetcher fetcher)
     {
         return new SiteService(
             fetcher,
@@ -280,9 +280,9 @@ public class SiteServiceTests
             new HtmlAgilityDocumentParser());
     }
 
-    private sealed class FakePageFetcher : IPageFetcher
+    private sealed class FakeHttpResourceFetcher : IHttpResourceFetcher
     {
-        private readonly Dictionary<string, Queue<Func<int, SingleFetchResult>>> _responses = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Queue<Func<int, HttpFetchResult>>> _responses = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _requestCounts = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _lock = new();
         private readonly ConcurrentQueue<string> _requestOrder = new();
@@ -291,15 +291,15 @@ public class SiteServiceTests
 
         public void EnqueueGetResponse(string url, int statusCode, string body, string contentType = "text/html", string? location = null, TimeSpan? retryAfter = null)
         {
-            EnqueueResponse(url, FetchRequestMethod.Get, statusCode, body, contentType, location, retryAfter);
+            EnqueueResponse(url, HttpFetchMethod.Get, statusCode, body, contentType, location, retryAfter);
         }
 
         public void EnqueueHeadResponse(string url, int statusCode, string body, string contentType = "text/plain", string? location = null, TimeSpan? retryAfter = null)
         {
-            EnqueueResponse(url, FetchRequestMethod.Head, statusCode, body, contentType, location, retryAfter);
+            EnqueueResponse(url, HttpFetchMethod.Head, statusCode, body, contentType, location, retryAfter);
         }
 
-        public int GetRequestCount(string url, FetchRequestMethod method)
+        public int GetRequestCount(string url, HttpFetchMethod method)
         {
             lock (_lock)
             {
@@ -308,7 +308,7 @@ public class SiteServiceTests
             }
         }
 
-        public Task<SingleFetchResult> FetchAsync(Uri url, FetchRequestMethod method, TimeSpan timeout, int maxPageBytes, CancellationToken cancellationToken)
+        public Task<HttpFetchResult> FetchAsync(Uri url, HttpFetchMethod method, TimeSpan timeout, int maxPageBytes, CancellationToken cancellationToken)
         {
             var key = CreateKey(url.AbsoluteUri, method);
 
@@ -327,19 +327,19 @@ public class SiteServiceTests
             return Task.FromResult(queue.Dequeue().Invoke(maxPageBytes));
         }
 
-        private void EnqueueResponse(string url, FetchRequestMethod method, int statusCode, string body, string contentType, string? location, TimeSpan? retryAfter)
+        private void EnqueueResponse(string url, HttpFetchMethod method, int statusCode, string body, string contentType, string? location, TimeSpan? retryAfter)
         {
             GetQueue(url, method).Enqueue((maxPageBytes) =>
             {
                 var redirectLocation = location is null ? null : new Uri(location, UriKind.RelativeOrAbsolute);
 
                 return Encoding.UTF8.GetByteCount(body) > maxPageBytes
-                    ? SingleFetchResult.ResponseTooLarge(statusCode, contentType, redirectLocation, retryAfter)
-                    : SingleFetchResult.Response(statusCode, body, contentType, redirectLocation, retryAfter);
+                    ? HttpFetchResult.ResponseTooLarge(statusCode, contentType, redirectLocation, retryAfter)
+                    : HttpFetchResult.Response(statusCode, body, contentType, redirectLocation, retryAfter);
             });
         }
 
-        private Queue<Func<int, SingleFetchResult>> GetQueue(string url, FetchRequestMethod method)
+        private Queue<Func<int, HttpFetchResult>> GetQueue(string url, HttpFetchMethod method)
         {
             lock (_lock)
             {
@@ -347,7 +347,7 @@ public class SiteServiceTests
 
                 if (!_responses.TryGetValue(key, out var queue))
                 {
-                    queue = new Queue<Func<int, SingleFetchResult>>();
+                    queue = new Queue<Func<int, HttpFetchResult>>();
                     _responses[key] = queue;
                 }
 
@@ -355,7 +355,7 @@ public class SiteServiceTests
             }
         }
 
-        private static string CreateKey(string url, FetchRequestMethod method)
+        private static string CreateKey(string url, HttpFetchMethod method)
         {
             return $"{method}:{url}";
         }
