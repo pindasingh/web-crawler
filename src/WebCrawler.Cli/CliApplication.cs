@@ -12,7 +12,7 @@ public static class CliApplication
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public static async Task<int> RunAsync(string[] args, TextWriter output, CrawlSiteService crawlSiteService, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(string[] args, TextWriter output, SiteService siteService, CancellationToken cancellationToken)
     {
         if (args.Length == 0 || args.Any(static arg => arg is "--help" or "-h"))
         {
@@ -28,11 +28,11 @@ public static class CliApplication
             return 1;
         }
 
-        CrawlReport report;
+        Report report;
 
         try
         {
-            report = await crawlSiteService.CrawlAsync(seedInput, options, cancellationToken);
+            report = await siteService.RunAsync(seedInput, options, cancellationToken);
         }
         catch (ArgumentException exception)
         {
@@ -49,11 +49,11 @@ public static class CliApplication
         return 0;
     }
 
-    private static bool TryParseArgs(string[] args, out string seedInput, out CrawlerOptions options, out string error)
+    private static bool TryParseArgs(string[] args, out string seedInput, out Options options, out string error)
     {
         seedInput = string.Empty;
         error = string.Empty;
-        options = new CrawlerOptions();
+        options = new Options();
         string? seed = null;
 
         for (var index = 0; index < args.Length; index++)
@@ -150,14 +150,14 @@ public static class CliApplication
         await output.WriteLineAsync(usage.AsMemory(), cancellationToken);
     }
 
-    private static CrawlOutputRecord ToOutputRecord(CrawlPage page)
+    private static OutputRecord ToOutputRecord(Page page)
     {
-        return new CrawlOutputRecord(
+        return new OutputRecord(
             page.Url.AbsoluteUri,
             page.Status switch
             {
-                CrawlPageStatus.Succeeded => "succeeded",
-                CrawlPageStatus.RedirectedOutOfScope => "redirected-out-of-scope",
+                PageStatus.Succeeded => "succeeded",
+                PageStatus.RedirectedOutOfScope => "redirected-out-of-scope",
                 _ => "failed"
             },
             page.Title,
@@ -222,7 +222,7 @@ public static class CliApplication
         return true;
     }
 
-    private sealed record CrawlOutputRecord(
+    private sealed record OutputRecord(
         string Url,
         string Status,
         string? Title,

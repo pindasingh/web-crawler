@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using WebCrawler.Application.Crawl;
 using WebCrawler.Application.Ports;
 using WebCrawler.Application.Transport;
@@ -8,11 +9,10 @@ using WebCrawler.Infrastructure.Html;
 
 namespace WebCrawler.Cli.Tests;
 
-public class CrawlDomainConventionTests
+public class SiteServiceTests
 {
-    // AC-001
     [Fact]
-    public async Task GivenHttpAndHttpsVariants_WhenCrawlEvaluatesScope_ThenTheyShareTheSameScopeFamily()
+    public async Task IncludesHttpAndHttpsVariantsForSameScopeIdentity()
     {
         var fetcher = new FakePageFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"http://example.com/about\">About</a><a href=\"ftp://example.com/file\">Ftp</a></body></html>");
@@ -20,45 +20,41 @@ public class CrawlDomainConventionTests
 
         var service = CreateService(fetcher);
 
-        var report = await service.CrawlAsync("https://example.com/", new CrawlerOptions { WorkerCount = 1 }, CancellationToken.None);
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "http://example.com/about");
         Assert.Equal(0, fetcher.GetRequestCount("ftp://example.com/file", FetchRequestMethod.Get));
     }
 
-    // AC-002
     [Fact]
-    public void GivenHostCaseVariants_WhenComparingScopeIdentity_ThenTheyMatch()
+    public void TreatsHostCaseVariantsAsSameScopeIdentity()
     {
         var upper = new Uri("https://Example.COM/path");
         var lower = new Uri("https://example.com/other");
 
-        Assert.True(CrawlUrlRules.HasSameScopeIdentity(upper, lower));
+        Assert.True(UrlRules.HasSameScopeIdentity(upper, lower));
     }
 
-    // AC-003
     [Fact]
-    public void GivenDefaultPorts_WhenComparingScopeIdentity_ThenTheyMatch()
+    public void TreatsDefaultPortsAsSameScopeIdentity()
     {
         var http = new Uri("http://example.com:80/");
         var https = new Uri("https://example.com/");
 
-        Assert.True(CrawlUrlRules.HasSameScopeIdentity(http, https));
+        Assert.True(UrlRules.HasSameScopeIdentity(http, https));
     }
 
-    // AC-004
     [Fact]
-    public void GivenUnicodeAndPunycodeHosts_WhenComparingScopeIdentity_ThenTheyMatch()
+    public void TreatsUnicodeAndPunycodeHostsAsSameScopeIdentity()
     {
         var unicode = new Uri("https://bücher.example/");
         var punycode = new Uri("https://xn--bcher-kva.example/");
 
-        Assert.True(CrawlUrlRules.HasSameScopeIdentity(unicode, punycode));
+        Assert.True(UrlRules.HasSameScopeIdentity(unicode, punycode));
     }
 
-    // AC-005
     [Fact]
-    public async Task GivenHeadUnsupportedProbe_WhenEvaluatingVariantScope_ThenItFallsBackToGet()
+    public async Task FallsBackToGetWhenHeadProbeIsUnsupported()
     {
         var fetcher = new FakePageFetcher();
         fetcher.EnqueueGetResponse("https://www.example.com/", 200, "<html><body><a href=\"https://example.com/entry\">Entry</a></body></html>");
@@ -69,7 +65,7 @@ public class CrawlDomainConventionTests
 
         var service = CreateService(fetcher);
 
-        var report = await service.CrawlAsync("https://www.example.com/", new CrawlerOptions { WorkerCount = 1 }, CancellationToken.None);
+        var report = await service.RunAsync("https://www.example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://www.example.com/landing");
         Assert.Equal(1, fetcher.GetRequestCount("https://example.com/entry", FetchRequestMethod.Head));
@@ -78,9 +74,8 @@ public class CrawlDomainConventionTests
         Assert.Contains("GET https://example.com/entry", fetcher.RequestOrder);
     }
 
-    // AC-006
     [Fact]
-    public async Task GivenWwwAndNonWwwVariants_WhenNoResolvedMatchExists_ThenTheyRemainDistinct()
+    public async Task KeepsWwwAndNonWwwDistinctWhenRedirectProbeDoesNotResolveToSeedIdentity()
     {
         var fetcher = new FakePageFetcher();
         fetcher.EnqueueGetResponse("https://www.example.com/", 200, "<html><body><a href=\"https://example.com/plain\">Plain</a></body></html>");
@@ -88,16 +83,14 @@ public class CrawlDomainConventionTests
 
         var service = CreateService(fetcher);
 
-        var report = await service.CrawlAsync("https://www.example.com/", new CrawlerOptions { WorkerCount = 1 }, CancellationToken.None);
+        var report = await service.RunAsync("https://www.example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/plain");
         Assert.Equal(0, fetcher.GetRequestCount("https://example.com/plain", FetchRequestMethod.Get));
     }
 
-    // AC-007
-    // AC-008
     [Fact]
-    public async Task GivenVariantRedirectsToSeedIdentity_WhenEvaluatingScope_ThenResolvedDestinationControlsCrawlEligibility()
+    public async Task UsesResolvedDestinationForVariantScopeEligibility()
     {
         var fetcher = new FakePageFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"https://www.example.com/entry\">Entry</a><a href=\"https://example.com./dot\">Dot</a></body></html>");
@@ -110,16 +103,15 @@ public class CrawlDomainConventionTests
 
         var service = CreateService(fetcher);
 
-        var report = await service.CrawlAsync("https://example.com/", new CrawlerOptions { WorkerCount = 1 }, CancellationToken.None);
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/final");
         Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/dot-final");
         Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://www.example.com/entry");
     }
 
-    // AC-009
     [Fact]
-    public async Task GivenWwwVariantRedirectsToDifferentIdentity_WhenEvaluatingScope_ThenItDoesNotMatchTheSeed()
+    public async Task RejectsVariantRedirectsOutsideSeedIdentity()
     {
         var fetcher = new FakePageFetcher();
         fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"https://www.example.com/entry\">Entry</a></body></html>");
@@ -128,15 +120,161 @@ public class CrawlDomainConventionTests
 
         var service = CreateService(fetcher);
 
-        var report = await service.CrawlAsync("https://example.com/", new CrawlerOptions { WorkerCount = 1 }, CancellationToken.None);
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
 
         Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://www.example.com/final");
         Assert.Equal(0, fetcher.GetRequestCount("https://www.example.com/final", FetchRequestMethod.Get));
     }
 
-    private static CrawlSiteService CreateService(FakePageFetcher fetcher)
+    [Fact]
+    public async Task FetchesSharedFinalRedirectTargetOnce()
     {
-        return new CrawlSiteService(
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/a\">A</a><a href=\"/b\">B</a></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/a", 302, string.Empty, "text/plain", "https://example.com/final");
+        fetcher.EnqueueGetResponse("https://example.com/final", 200, "<html><body></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/b", 302, string.Empty, "text/plain", "https://example.com/final");
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
+
+        Assert.Single(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/final");
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/final", FetchRequestMethod.Get));
+    }
+
+    [Fact]
+    public async Task ReportsInScopeRedirectsOutOfScope()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/exit\">Exit</a></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/exit", 302, string.Empty, "text/plain", "https://other.example/final");
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
+
+        var page = Assert.Single(report.Pages, static page => page.RequestedUrl.AbsoluteUri == "https://example.com/exit");
+        Assert.Equal(PageStatus.RedirectedOutOfScope, page.Status);
+        Assert.Equal("redirected-out-of-scope", page.Error);
+        Assert.Equal("https://other.example/final", page.Url.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task FailsRedirectLoopsWithoutUnboundedFetches()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 302, string.Empty, "text/plain", "https://example.com/a");
+        fetcher.EnqueueGetResponse("https://example.com/a", 302, string.Empty, "text/plain", "https://example.com/");
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
+
+        var page = Assert.Single(report.Pages);
+        Assert.Equal(PageStatus.Failed, page.Status);
+        Assert.Equal("redirect-loop", page.Error);
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/", FetchRequestMethod.Get));
+        Assert.Equal(1, fetcher.GetRequestCount("https://example.com/a", FetchRequestMethod.Get));
+    }
+
+    [Fact]
+    public async Task ReportsFinalAttemptWhenRetryAttemptsAreExhausted()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 503, string.Empty, retryAfter: TimeSpan.Zero);
+        fetcher.EnqueueGetResponse("https://example.com/", 503, string.Empty, retryAfter: TimeSpan.Zero);
+        fetcher.EnqueueGetResponse("https://example.com/", 503, string.Empty, retryAfter: TimeSpan.Zero);
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1, BaseRetryDelay = TimeSpan.Zero }, CancellationToken.None);
+
+        var page = Assert.Single(report.Pages);
+        Assert.Equal(PageStatus.Failed, page.Status);
+        Assert.Equal("http-503", page.Error);
+        Assert.Equal(503, page.StatusCode);
+        Assert.Equal(3, page.AttemptCount);
+        Assert.Equal(3, fetcher.GetRequestCount("https://example.com/", FetchRequestMethod.Get));
+    }
+
+    [Fact]
+    public async Task ProcessesReadyWorkBeforeDelayedRetry()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/retry\">Retry</a><a href=\"/other\">Other</a></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/retry", 500, string.Empty);
+        fetcher.EnqueueGetResponse("https://example.com/retry", 200, "<html><body></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/other", 200, "<html><body></body></html>");
+
+        var service = CreateService(fetcher);
+
+        await service.RunAsync("https://example.com/", new Options { WorkerCount = 1, BaseRetryDelay = TimeSpan.FromMilliseconds(1) }, CancellationToken.None);
+
+        Assert.Contains(
+            "GET https://example.com/retry|GET https://example.com/other|GET https://example.com/retry",
+            fetcher.RequestOrder);
+    }
+
+    [Fact]
+    public async Task ReportsOversizedResponsesWithoutParsingLinks()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/hidden\">Hidden</a></body></html>");
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1, MaxPageBytes = 10 }, CancellationToken.None);
+
+        var page = Assert.Single(report.Pages);
+        Assert.Equal(PageStatus.Failed, page.Status);
+        Assert.Equal("response-too-large", page.Error);
+        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/hidden", FetchRequestMethod.Get));
+    }
+
+    [Fact]
+    public async Task DoesNotFetchLinksBeyondConfiguredMaxDepth()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/child\">Child</a></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/child", 200, "<html><body><a href=\"/grandchild\">Grandchild</a></body></html>");
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1, MaxDepth = 1 }, CancellationToken.None);
+
+        Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/child");
+        Assert.DoesNotContain(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/grandchild");
+        Assert.Equal(0, fetcher.GetRequestCount("https://example.com/grandchild", FetchRequestMethod.Get));
+    }
+
+    [Fact]
+    public async Task UsesUnlimitedDepthByDefault()
+    {
+        var fetcher = new FakePageFetcher();
+        fetcher.EnqueueGetResponse("https://example.com/", 200, "<html><body><a href=\"/child\">Child</a></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/child", 200, "<html><body><a href=\"/grandchild\">Grandchild</a></body></html>");
+        fetcher.EnqueueGetResponse("https://example.com/grandchild", 200, "<html><body></body></html>");
+
+        var service = CreateService(fetcher);
+
+        var report = await service.RunAsync("https://example.com/", new Options { WorkerCount = 1 }, CancellationToken.None);
+
+        Assert.Contains(report.Pages, static page => page.Url.AbsoluteUri == "https://example.com/grandchild");
+    }
+
+    [Fact]
+    public void IgnoresRobotsSitemapDirectives()
+    {
+        var rules = RobotsRules.Parse("User-agent: *\nSitemap: https://example.com/sitemap.xml\nDisallow: /blocked");
+
+        Assert.True(rules.IsAllowed(new Uri("https://example.com/sitemap.xml")));
+        Assert.False(rules.IsAllowed(new Uri("https://example.com/blocked")));
+    }
+
+    private static SiteService CreateService(FakePageFetcher fetcher)
+    {
+        return new SiteService(
             fetcher,
             new FakeRobotsPolicyProvider(RobotsRules.AllowAll()),
             new HtmlAgilityDocumentParser());
@@ -144,21 +282,21 @@ public class CrawlDomainConventionTests
 
     private sealed class FakePageFetcher : IPageFetcher
     {
-        private readonly Dictionary<string, Queue<Func<SingleFetchResult>>> _responses = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Queue<Func<int, SingleFetchResult>>> _responses = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _requestCounts = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _lock = new();
         private readonly ConcurrentQueue<string> _requestOrder = new();
 
         public string RequestOrder => string.Join("|", _requestOrder);
 
-        public void EnqueueGetResponse(string url, int statusCode, string body, string contentType = "text/html", string? location = null)
+        public void EnqueueGetResponse(string url, int statusCode, string body, string contentType = "text/html", string? location = null, TimeSpan? retryAfter = null)
         {
-            EnqueueResponse(url, FetchRequestMethod.Get, statusCode, body, contentType, location);
+            EnqueueResponse(url, FetchRequestMethod.Get, statusCode, body, contentType, location, retryAfter);
         }
 
-        public void EnqueueHeadResponse(string url, int statusCode, string body, string contentType = "text/plain", string? location = null)
+        public void EnqueueHeadResponse(string url, int statusCode, string body, string contentType = "text/plain", string? location = null, TimeSpan? retryAfter = null)
         {
-            EnqueueResponse(url, FetchRequestMethod.Head, statusCode, body, contentType, location);
+            EnqueueResponse(url, FetchRequestMethod.Head, statusCode, body, contentType, location, retryAfter);
         }
 
         public int GetRequestCount(string url, FetchRequestMethod method)
@@ -170,7 +308,7 @@ public class CrawlDomainConventionTests
             }
         }
 
-        public Task<SingleFetchResult> FetchAsync(Uri url, FetchRequestMethod method, TimeSpan timeout, CancellationToken cancellationToken)
+        public Task<SingleFetchResult> FetchAsync(Uri url, FetchRequestMethod method, TimeSpan timeout, int maxPageBytes, CancellationToken cancellationToken)
         {
             var key = CreateKey(url.AbsoluteUri, method);
 
@@ -186,19 +324,22 @@ public class CrawlDomainConventionTests
                 throw new InvalidOperationException($"No fake response queued for {method} {url.AbsoluteUri}.");
             }
 
-            return Task.FromResult(queue.Dequeue().Invoke());
+            return Task.FromResult(queue.Dequeue().Invoke(maxPageBytes));
         }
 
-        private void EnqueueResponse(string url, FetchRequestMethod method, int statusCode, string body, string contentType, string? location)
+        private void EnqueueResponse(string url, FetchRequestMethod method, int statusCode, string body, string contentType, string? location, TimeSpan? retryAfter)
         {
-            GetQueue(url, method).Enqueue(() => SingleFetchResult.Response(
-                statusCode,
-                body,
-                contentType,
-                location is null ? null : new Uri(location, UriKind.RelativeOrAbsolute)));
+            GetQueue(url, method).Enqueue((maxPageBytes) =>
+            {
+                var redirectLocation = location is null ? null : new Uri(location, UriKind.RelativeOrAbsolute);
+
+                return Encoding.UTF8.GetByteCount(body) > maxPageBytes
+                    ? SingleFetchResult.ResponseTooLarge(statusCode, contentType, redirectLocation, retryAfter)
+                    : SingleFetchResult.Response(statusCode, body, contentType, redirectLocation, retryAfter);
+            });
         }
 
-        private Queue<Func<SingleFetchResult>> GetQueue(string url, FetchRequestMethod method)
+        private Queue<Func<int, SingleFetchResult>> GetQueue(string url, FetchRequestMethod method)
         {
             lock (_lock)
             {
@@ -206,7 +347,7 @@ public class CrawlDomainConventionTests
 
                 if (!_responses.TryGetValue(key, out var queue))
                 {
-                    queue = new Queue<Func<SingleFetchResult>>();
+                    queue = new Queue<Func<int, SingleFetchResult>>();
                     _responses[key] = queue;
                 }
 

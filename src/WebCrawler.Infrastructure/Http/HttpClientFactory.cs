@@ -2,7 +2,7 @@ using System.Net;
 
 namespace WebCrawler.Infrastructure.Http;
 
-public static class CrawlerHttpClientFactory
+public static class HttpClientFactory
 {
     public static HttpClient CreateDefault()
     {

@@ -1,6 +1,6 @@
 namespace WebCrawler.Domain.Crawl;
 
-public static class CrawlUrlRules
+public static class UrlRules
 {
     public static Uri ParseSeed(string seedInput)
     {
@@ -48,11 +48,11 @@ public static class CrawlUrlRules
         return CreateScopeIdentity(left) == CreateScopeIdentity(right);
     }
 
-    public static CrawlScopeIdentity CreateScopeIdentity(Uri uri)
+    public static ScopeIdentity CreateScopeIdentity(Uri uri)
     {
         var normalizedHost = uri.IdnHost.ToLowerInvariant();
         var normalizedPort = NormalizeScopePort(uri);
-        return new CrawlScopeIdentity(normalizedHost, normalizedPort);
+        return new ScopeIdentity(normalizedHost, normalizedPort);
     }
 
     public static bool RequiresScopeProbe(Uri candidate, Uri seedUrl)

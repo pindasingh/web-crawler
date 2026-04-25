@@ -47,7 +47,7 @@ public sealed class HttpRobotsPolicyProvider : IRobotsPolicyProvider
             var response = await _httpClient.GetAsync(currentUri, cancellationToken);
             var statusCode = (int)response.StatusCode;
 
-            if (!CrawlUrlRules.IsRedirectStatus(statusCode))
+            if (!UrlRules.IsRedirectStatus(statusCode))
             {
                 return response;
             }
@@ -58,10 +58,10 @@ public sealed class HttpRobotsPolicyProvider : IRobotsPolicyProvider
                 throw new InvalidOperationException("Invalid robots redirect.");
             }
 
-            var nextUri = CrawlUrlRules.ResolveRedirect(currentUri, response.Headers.Location);
+            var nextUri = UrlRules.ResolveRedirect(currentUri, response.Headers.Location);
             response.Dispose();
 
-            if (!CrawlUrlRules.IsInScope(nextUri, seedUrl))
+            if (!UrlRules.IsInScope(nextUri, seedUrl))
             {
                 throw new InvalidOperationException("Robots redirect left crawl scope.");
             }

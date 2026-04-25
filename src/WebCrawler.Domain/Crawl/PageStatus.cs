@@ -1,6 +1,6 @@
 namespace WebCrawler.Domain.Crawl;
 
-public enum CrawlPageStatus
+public enum PageStatus
 {
     Succeeded,
     Failed,

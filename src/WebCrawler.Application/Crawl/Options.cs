@@ -1,6 +1,6 @@
 namespace WebCrawler.Application.Crawl;
 
-public sealed record CrawlerOptions
+public sealed record Options
 {
     public const int DefaultMaxPageBytes = 2 * 1024 * 1024;
 

@@ -1,9 +1,9 @@
 namespace WebCrawler.Domain.Crawl;
 
-public sealed record CrawlPage(
+public sealed record Page(
     Uri RequestedUrl,
     Uri Url,
-    CrawlPageStatus Status,
+    PageStatus Status,
     int? StatusCode,
     string? Title,
     IReadOnlyList<Uri> Links,

@@ -4,13 +4,13 @@ namespace WebCrawler.Application.Crawl;
 
 internal sealed class Queue
 {
-    private readonly Channel<CrawlWorkItem> _ready = Channel.CreateUnbounded<CrawlWorkItem>(new UnboundedChannelOptions
+    private readonly Channel<WorkItem> _ready = Channel.CreateUnbounded<WorkItem>(new UnboundedChannelOptions
     {
         SingleReader = false,
         SingleWriter = false
     });
 
-    private readonly PriorityQueue<CrawlWorkItem, DateTimeOffset> _scheduled = new();
+    private readonly PriorityQueue<WorkItem, DateTimeOffset> _scheduled = new();
     private readonly SemaphoreSlim _changed = new(0);
     private readonly object _lock = new();
     private readonly Task _scheduler;
@@ -21,7 +21,7 @@ internal sealed class Queue
         _scheduler = Task.Run(PromoteScheduledWorkAsync);
     }
 
-    public void Enqueue(CrawlWorkItem item)
+    public void Enqueue(WorkItem item)
     {
         if (IsCompleted())
         {
@@ -31,7 +31,7 @@ internal sealed class Queue
         _ready.Writer.TryWrite(item);
     }
 
-    public void Enqueue(CrawlWorkItem item, DateTimeOffset readyAtUtc)
+    public void Enqueue(WorkItem item, DateTimeOffset readyAtUtc)
     {
         if (readyAtUtc <= DateTimeOffset.UtcNow)
         {
@@ -52,7 +52,7 @@ internal sealed class Queue
         _changed.Release();
     }
 
-    public IAsyncEnumerable<CrawlWorkItem> ReadAllAsync(CancellationToken cancellationToken)
+    public IAsyncEnumerable<WorkItem> ReadAllAsync(CancellationToken cancellationToken)
     {
         return _ready.Reader.ReadAllAsync(cancellationToken);
     }
@@ -78,7 +78,7 @@ internal sealed class Queue
     {
         while (true)
         {
-            var readyItems = new List<CrawlWorkItem>();
+            var readyItems = new List<WorkItem>();
             DateTimeOffset? nextReadyAtUtc = null;
 
             lock (_lock)
