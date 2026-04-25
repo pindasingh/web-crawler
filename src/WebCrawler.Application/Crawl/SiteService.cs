@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Threading.Channels;
 using WebCrawler.Application.Ports;
 using WebCrawler.Application.Transport;
 using WebCrawler.Domain.Crawl;
@@ -29,25 +28,26 @@ public sealed class CrawlSiteService
 
         var seedUrl = CrawlUrlRules.ParseSeed(seedInput);
         var robotsRules = await _robotsPolicyProvider.GetRulesAsync(seedUrl, cancellationToken);
-        var channel = Channel.CreateUnbounded<CrawlWorkItem>(new UnboundedChannelOptions
-        {
-            SingleReader = false,
-            SingleWriter = false
-        });
-
-        var visited = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var reservations = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var results = new ConcurrentBag<CrawlPage>();
-        var state = new CrawlRuntimeState(seedUrl, options, robotsRules, channel, visited, results);
+        var state = new CrawlRuntimeState(seedUrl, options, robotsRules, new Queue(), reservations, results);
 
         state.TryReserve(seedUrl);
         state.IncrementOutstanding();
-        state.Channel.Writer.TryWrite(new CrawlWorkItem(seedUrl, 1));
+        state.Queue.Enqueue(new CrawlWorkItem(seedUrl, 0, 1));
 
         var workers = Enumerable.Range(0, options.EffectiveWorkerCount())
             .Select(_ => RunWorkerAsync(state, cancellationToken))
             .ToArray();
 
-        await Task.WhenAll(workers);
+        try
+        {
+            await Task.WhenAll(workers);
+        }
+        finally
+        {
+            state.Queue.Complete();
+        }
 
         var pages = results
             .OrderBy(static page => page.Url.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
@@ -59,7 +59,7 @@ public sealed class CrawlSiteService
 
     private async Task RunWorkerAsync(CrawlRuntimeState state, CancellationToken cancellationToken)
     {
-        await foreach (var workItem in state.Channel.Reader.ReadAllAsync(cancellationToken))
+        await foreach (var workItem in state.Queue.ReadAllAsync(cancellationToken))
         {
             await ProcessAsync(workItem, state, cancellationToken);
         }
@@ -67,11 +67,19 @@ public sealed class CrawlSiteService
 
     private async Task ProcessAsync(CrawlWorkItem workItem, CrawlRuntimeState state, CancellationToken cancellationToken)
     {
-        var fetchOutcome = await FetchWithRedirectsAsync(workItem.Url, state.SeedUrl, state.Options, cancellationToken);
+        var fetchOutcome = (await FetchWithRedirectsAsync(workItem, state, cancellationToken))
+            .WithWorkItem(workItem);
+
+        if (fetchOutcome.Kind == FetchOutcomeKind.DuplicateFinalUrl)
+        {
+            state.CompleteOutstanding();
+            return;
+        }
 
         if (fetchOutcome.ShouldRetry && workItem.Attempt < state.Options.MaxAttempts)
         {
-            _ = RequeueAsync(workItem.NextAttempt(), state, cancellationToken);
+            var delay = CalculateRetryDelay(fetchOutcome, state.Options, workItem.Attempt);
+            state.Queue.Enqueue(workItem.NextAttempt(), DateTimeOffset.UtcNow + delay);
             return;
         }
 
@@ -86,7 +94,8 @@ public sealed class CrawlSiteService
                 null,
                 Array.Empty<Uri>(),
                 "redirected-out-of-scope",
-                fetchOutcome.RedirectChain),
+                fetchOutcome.RedirectChain,
+                workItem.Attempt),
             _ => new CrawlPage(
                 workItem.Url,
                 fetchOutcome.FinalUrl,
@@ -95,7 +104,8 @@ public sealed class CrawlSiteService
                 null,
                 Array.Empty<Uri>(),
                 fetchOutcome.Error,
-                fetchOutcome.RedirectChain)
+                fetchOutcome.RedirectChain,
+                workItem.Attempt)
         };
 
         state.Results.Add(result);
@@ -138,10 +148,15 @@ public sealed class CrawlSiteService
                     continue;
                 }
 
+                if (!CanCrawlDepth(fetchOutcome.Depth + 1, state.Options))
+                {
+                    continue;
+                }
+
                 if (state.TryReserve(resolvedLink))
                 {
                     state.IncrementOutstanding();
-                    state.Channel.Writer.TryWrite(new CrawlWorkItem(resolvedLink, 1));
+                    state.Queue.Enqueue(new CrawlWorkItem(resolvedLink, fetchOutcome.Depth + 1, 1));
                 }
             }
         }
@@ -154,40 +169,37 @@ public sealed class CrawlSiteService
             title,
             discoveredLinks.OrderBy(static uri => uri.AbsoluteUri, StringComparer.OrdinalIgnoreCase).ToArray(),
             null,
-            fetchOutcome.RedirectChain);
+            fetchOutcome.RedirectChain,
+            fetchOutcome.Attempt);
     }
 
-    private async Task RequeueAsync(CrawlWorkItem workItem, CrawlRuntimeState state, CancellationToken cancellationToken)
+    private static TimeSpan CalculateRetryDelay(FetchOutcome fetchOutcome, CrawlerOptions options, int failedAttempt)
     {
-        try
+        if (fetchOutcome.StatusCode is 429 or 503 && fetchOutcome.RetryAfter is { } retryAfter)
         {
-            var delay = TimeSpan.FromMilliseconds(state.Options.BaseRetryDelay.TotalMilliseconds * workItem.Attempt);
-            await Task.Delay(delay, cancellationToken);
-            state.Channel.Writer.TryWrite(workItem);
+            return retryAfter;
         }
-        catch (OperationCanceledException)
+
+        if (options.BaseRetryDelay <= TimeSpan.Zero)
         {
-            state.Results.Add(new CrawlPage(
-                workItem.Url,
-                workItem.Url,
-                CrawlPageStatus.Failed,
-                null,
-                null,
-                Array.Empty<Uri>(),
-                "cancelled",
-                new[] { workItem.Url }));
-            state.CompleteOutstanding();
+            return TimeSpan.Zero;
         }
+
+        var multiplier = Math.Pow(2, Math.Max(0, failedAttempt - 1));
+        var baseDelayMs = options.BaseRetryDelay.TotalMilliseconds * multiplier;
+        var jitterMs = Random.Shared.NextDouble() * options.BaseRetryDelay.TotalMilliseconds * 0.25;
+        return TimeSpan.FromMilliseconds(baseDelayMs + jitterMs);
     }
 
-    private async Task<FetchOutcome> FetchWithRedirectsAsync(Uri requestedUrl, Uri seedUrl, CrawlerOptions options, CancellationToken cancellationToken)
+    private async Task<FetchOutcome> FetchWithRedirectsAsync(CrawlWorkItem workItem, CrawlRuntimeState state, CancellationToken cancellationToken)
     {
+        var requestedUrl = workItem.Url;
         var currentUrl = requestedUrl;
         var redirectChain = new List<Uri> { requestedUrl };
 
-        for (var redirectCount = 0; redirectCount <= options.MaxRedirects; redirectCount++)
+        for (var redirectCount = 0; redirectCount <= state.Options.MaxRedirects; redirectCount++)
         {
-            var singleFetch = await _pageFetcher.FetchAsync(currentUrl, FetchRequestMethod.Get, options.RequestTimeout, cancellationToken);
+            var singleFetch = await _pageFetcher.FetchAsync(currentUrl, FetchRequestMethod.Get, state.Options.RequestTimeout, state.Options.MaxPageBytes, cancellationToken);
 
             if (singleFetch.Kind == SingleFetchResultKind.Timeout)
             {
@@ -201,6 +213,11 @@ public sealed class CrawlSiteService
 
             var statusCode = singleFetch.StatusCode ?? 0;
 
+            if (singleFetch.Kind == SingleFetchResultKind.ResponseTooLarge)
+            {
+                return FetchOutcome.TerminalFailure(requestedUrl, currentUrl, statusCode, "response-too-large", redirectChain);
+            }
+
             if (CrawlUrlRules.IsRedirectStatus(statusCode))
             {
                 if (singleFetch.RedirectLocation is null)
@@ -209,11 +226,23 @@ public sealed class CrawlSiteService
                 }
 
                 currentUrl = CrawlUrlRules.ResolveRedirect(currentUrl, singleFetch.RedirectLocation);
+
+                if (redirectChain.Contains(currentUrl, AbsoluteUriComparer.Instance))
+                {
+                    redirectChain.Add(currentUrl);
+                    return FetchOutcome.TerminalFailure(requestedUrl, currentUrl, statusCode, "redirect-loop", redirectChain);
+                }
+
                 redirectChain.Add(currentUrl);
 
-                if (!CrawlUrlRules.IsInScope(currentUrl, seedUrl))
+                if (!CrawlUrlRules.IsInScope(currentUrl, state.SeedUrl))
                 {
                     return FetchOutcome.RedirectedOutOfScope(requestedUrl, currentUrl, statusCode, redirectChain);
+                }
+
+                if (!state.TryReserveRedirectTarget(workItem, currentUrl))
+                {
+                    return FetchOutcome.DuplicateFinalUrl(requestedUrl, currentUrl, statusCode, redirectChain);
                 }
 
                 continue;
@@ -221,7 +250,7 @@ public sealed class CrawlSiteService
 
             if (CrawlUrlRules.IsTransientStatus(statusCode))
             {
-                return FetchOutcome.TransientFailure(requestedUrl, currentUrl, $"http-{statusCode}", redirectChain, statusCode);
+                return FetchOutcome.TransientFailure(requestedUrl, currentUrl, $"http-{statusCode}", redirectChain, statusCode, singleFetch.RetryAfter);
             }
 
             if (statusCode < 200 || statusCode >= 300)
@@ -282,7 +311,7 @@ public sealed class CrawlSiteService
 
         for (var redirectCount = 0; redirectCount <= options.MaxRedirects; redirectCount++)
         {
-            var singleFetch = await _pageFetcher.FetchAsync(currentUrl, method, options.RequestTimeout, cancellationToken);
+            var singleFetch = await _pageFetcher.FetchAsync(currentUrl, method, options.RequestTimeout, options.MaxPageBytes, cancellationToken);
 
             if (singleFetch.Kind != SingleFetchResultKind.Response)
             {
@@ -304,6 +333,12 @@ public sealed class CrawlSiteService
                 }
 
                 currentUrl = CrawlUrlRules.ResolveRedirect(currentUrl, singleFetch.RedirectLocation);
+
+                if (!CrawlUrlRules.IsSupportedScheme(currentUrl))
+                {
+                    return ProbeOutcome.Unresolved(currentUrl);
+                }
+
                 continue;
             }
 
@@ -319,9 +354,9 @@ public sealed class CrawlSiteService
             || contentType.Contains("html", StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed record CrawlWorkItem(Uri Url, int Attempt)
+    private static bool CanCrawlDepth(int depth, CrawlerOptions options)
     {
-        public CrawlWorkItem NextAttempt() => this with { Attempt = Attempt + 1 };
+        return options.MaxDepth is null || depth <= options.MaxDepth;
     }
 
     private sealed class CrawlRuntimeState
@@ -332,15 +367,15 @@ public sealed class CrawlSiteService
             Uri seedUrl,
             CrawlerOptions options,
             RobotsRules robotsRules,
-            Channel<CrawlWorkItem> channel,
-            ConcurrentDictionary<string, byte> visited,
+            Queue queue,
+            ConcurrentDictionary<string, string> reservations,
             ConcurrentBag<CrawlPage> results)
         {
             SeedUrl = seedUrl;
             Options = options;
             RobotsRules = robotsRules;
-            Channel = channel;
-            Visited = visited;
+            Queue = queue;
+            Reservations = reservations;
             Results = results;
         }
 
@@ -350,15 +385,34 @@ public sealed class CrawlSiteService
 
         public RobotsRules RobotsRules { get; }
 
-        public Channel<CrawlWorkItem> Channel { get; }
+        public Queue Queue { get; }
 
-        public ConcurrentDictionary<string, byte> Visited { get; }
+        public ConcurrentDictionary<string, string> Reservations { get; }
 
         public ConcurrentBag<CrawlPage> Results { get; }
 
         public bool TryReserve(Uri url)
         {
-            return Visited.TryAdd(url.AbsoluteUri, 0);
+            return Reservations.TryAdd(url.AbsoluteUri, url.AbsoluteUri);
+        }
+
+        public bool TryReserveRedirectTarget(CrawlWorkItem workItem, Uri finalUrl)
+        {
+            if (AbsoluteUriComparer.Instance.Equals(workItem.Url, finalUrl))
+            {
+                return true;
+            }
+
+            var owner = workItem.Url.AbsoluteUri;
+
+            // The value tracks the requested URL that owns a final redirect reservation.
+            if (!Reservations.TryAdd(finalUrl.AbsoluteUri, owner))
+            {
+                return Reservations.TryGetValue(finalUrl.AbsoluteUri, out var existingOwner)
+                    && StringComparer.OrdinalIgnoreCase.Equals(existingOwner, owner);
+            }
+
+            return true;
         }
 
         public void IncrementOutstanding()
@@ -370,7 +424,7 @@ public sealed class CrawlSiteService
         {
             if (Interlocked.Decrement(ref _outstanding) == 0)
             {
-                Channel.Writer.TryComplete();
+                Queue.Complete();
             }
         }
     }
@@ -384,27 +438,37 @@ public sealed class CrawlSiteService
         string? ContentType,
         string? Error,
         bool ShouldRetry,
-        IReadOnlyList<Uri> RedirectChain)
+        IReadOnlyList<Uri> RedirectChain,
+        TimeSpan? RetryAfter,
+        int Depth = 0,
+        int Attempt = 1)
     {
         public static FetchOutcome Success(Uri requestedUrl, Uri finalUrl, int statusCode, string body, string? contentType, IReadOnlyList<Uri> redirectChain)
         {
-            return new FetchOutcome(FetchOutcomeKind.Success, requestedUrl, finalUrl, statusCode, body, contentType, null, false, redirectChain);
+            return new FetchOutcome(FetchOutcomeKind.Success, requestedUrl, finalUrl, statusCode, body, contentType, null, false, redirectChain, null);
         }
 
-        public static FetchOutcome TransientFailure(Uri requestedUrl, Uri finalUrl, string error, IReadOnlyList<Uri> redirectChain, int? statusCode = null)
+        public static FetchOutcome TransientFailure(Uri requestedUrl, Uri finalUrl, string error, IReadOnlyList<Uri> redirectChain, int? statusCode = null, TimeSpan? retryAfter = null)
         {
-            return new FetchOutcome(FetchOutcomeKind.TransientFailure, requestedUrl, finalUrl, statusCode, string.Empty, null, error, true, redirectChain);
+            return new FetchOutcome(FetchOutcomeKind.TransientFailure, requestedUrl, finalUrl, statusCode, string.Empty, null, error, true, redirectChain, retryAfter);
         }
 
         public static FetchOutcome TerminalFailure(Uri requestedUrl, Uri finalUrl, int? statusCode, string error, IReadOnlyList<Uri> redirectChain)
         {
-            return new FetchOutcome(FetchOutcomeKind.TerminalFailure, requestedUrl, finalUrl, statusCode, string.Empty, null, error, false, redirectChain);
+            return new FetchOutcome(FetchOutcomeKind.TerminalFailure, requestedUrl, finalUrl, statusCode, string.Empty, null, error, false, redirectChain, null);
         }
 
         public static FetchOutcome RedirectedOutOfScope(Uri requestedUrl, Uri finalUrl, int? statusCode, IReadOnlyList<Uri> redirectChain)
         {
-            return new FetchOutcome(FetchOutcomeKind.RedirectedOutOfScope, requestedUrl, finalUrl, statusCode, string.Empty, null, "redirected-out-of-scope", false, redirectChain);
+            return new FetchOutcome(FetchOutcomeKind.RedirectedOutOfScope, requestedUrl, finalUrl, statusCode, string.Empty, null, "redirected-out-of-scope", false, redirectChain, null);
         }
+
+        public static FetchOutcome DuplicateFinalUrl(Uri requestedUrl, Uri finalUrl, int? statusCode, IReadOnlyList<Uri> redirectChain)
+        {
+            return new FetchOutcome(FetchOutcomeKind.DuplicateFinalUrl, requestedUrl, finalUrl, statusCode, string.Empty, null, "duplicate-final-url", false, redirectChain, null);
+        }
+
+        public FetchOutcome WithWorkItem(CrawlWorkItem workItem) => this with { Depth = workItem.Depth, Attempt = workItem.Attempt };
     }
 
     private enum FetchOutcomeKind
@@ -412,7 +476,8 @@ public sealed class CrawlSiteService
         Success,
         TransientFailure,
         TerminalFailure,
-        RedirectedOutOfScope
+        RedirectedOutOfScope,
+        DuplicateFinalUrl
     }
 
     private sealed class AbsoluteUriComparer : IEqualityComparer<Uri>

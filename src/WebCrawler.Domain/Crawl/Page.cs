@@ -8,4 +8,5 @@ public sealed record CrawlPage(
     string? Title,
     IReadOnlyList<Uri> Links,
     string? Error,
-    IReadOnlyList<Uri> RedirectChain);
+    IReadOnlyList<Uri> RedirectChain,
+    int AttemptCount);

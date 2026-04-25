@@ -4,10 +4,10 @@ using WebCrawler.Infrastructure.Html;
 using WebCrawler.Infrastructure.Http;
 using WebCrawler.Infrastructure.Robots;
 
-using var httpClient = CrawlerHttpClientFactory.CreateDefault();
-var crawlSiteService = new CrawlSiteService(
+using var httpClient = HttpClientFactory.CreateDefault();
+var siteService = new SiteService(
     new HttpPageFetcher(httpClient),
     new HttpRobotsPolicyProvider(httpClient),
     new HtmlAgilityDocumentParser());
-var exitCode = await CliApplication.RunAsync(args, Console.Out, crawlSiteService, CancellationToken.None);
+var exitCode = await CliApplication.RunAsync(args, Console.Out, siteService, CancellationToken.None);
 Environment.ExitCode = exitCode;

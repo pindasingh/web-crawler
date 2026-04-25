@@ -110,6 +110,24 @@ public static class CliApplication
                     options = options with { MaxRedirects = maxRedirects };
                     break;
 
+                case "--max-depth":
+                    if (!TryReadNonNegativeInt(args, ref index, out var maxDepth, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { MaxDepth = maxDepth };
+                    break;
+
+                case "--max-page-bytes":
+                    if (!TryReadPositiveInt(args, ref index, out var maxPageBytes, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { MaxPageBytes = maxPageBytes };
+                    break;
+
                 default:
                     error = $"Unknown argument: {arg}";
                     return false;
@@ -128,7 +146,7 @@ public static class CliApplication
 
     private static async Task WriteUsageAsync(TextWriter output, CancellationToken cancellationToken)
     {
-        const string usage = "Usage: webcrawler <seed-url> [--workers N] [--timeout-ms N] [--retry-delay-ms N] [--max-redirects N]";
+        const string usage = "Usage: webcrawler <seed-url> [--workers N] [--timeout-ms N] [--retry-delay-ms N] [--max-redirects N] [--max-depth N] [--max-page-bytes N]";
         await output.WriteLineAsync(usage.AsMemory(), cancellationToken);
     }
 
@@ -146,7 +164,8 @@ public static class CliApplication
             page.Links.Select(static link => link.AbsoluteUri).ToArray(),
             page.StatusCode,
             page.Error,
-            page.RedirectChain.Select(static uri => uri.AbsoluteUri).ToArray());
+            page.RedirectChain.Select(static uri => uri.AbsoluteUri).ToArray(),
+            page.AttemptCount);
     }
 
     private static bool TryReadPositiveInt(string[] args, ref int index, out int value, out string error)
@@ -210,5 +229,6 @@ public static class CliApplication
         IReadOnlyList<string> Links,
         int? StatusCode,
         string? Error,
-        IReadOnlyList<string> RedirectChain);
+        IReadOnlyList<string> RedirectChain,
+        int AttemptCount);
 }

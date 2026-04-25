@@ -84,7 +84,7 @@ public static class CrawlUrlRules
 
     public static bool IsTransientStatus(int statusCode)
     {
-        return statusCode >= 500 || statusCode is 408 or 429;
+        return statusCode is 408 or 429 or 500 or 502 or 503 or 504;
     }
 
     private static int? NormalizeScopePort(Uri uri)
