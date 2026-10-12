@@ -24,4 +24,5 @@ Read the YAML front matter in this repository's root `AGENTS.md` before making a
 - This convention supersedes older mandatory-worktree and PR-only rules, including `worktrees.enabled` in `.agent/settings.json`. Keep unrelated settings there.
 - Preserve existing modifications and untracked files. Do not switch a dirty checkout to another branch or reset, stash, clean, or discard unrelated work to make the workflow easier.
 - Select a suitable task branch or worktree autonomously within the configured mode unless Pinda explicitly selected one. A repository change request authorises this routine selection.
+- When Pinda authorises completing a PR, always use squash merging. After confirming the merge succeeded, delete its source branch locally and remotely. Remove any clean associated worktree first; preserve meaningful uncommitted work and any later commits not included in the merged PR. Do not delete the default branch or branches supporting another open PR.
 - Report the result and verification; include the PR link when the mode requires a PR.
